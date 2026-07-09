@@ -1,15 +1,12 @@
 # Psikotes Score Automation — API
 
-Internal recap-matching service. **No UI here anymore** — the frontend is the
+Internal recap-matching service. **No UI here anymore**, the frontend is the
 "Automated Recap" page in [Ordinat Dashboard](../ordinat-dashboard) (Next.js),
 which proxies every request to this service. Every route requires
 `Authorization: Bearer <RECAP_SERVICE_TOKEN>`; there's nothing to see by
 visiting this service directly in a browser, and it should **never be exposed
-to the public internet** — only the dashboard's server should be able to
+to the public internet**, only the dashboard's server should be able to
 reach it.
-
-The old HTML template (`templates/index.html.bak`) is kept only as a
-reference for the API's request/response shapes; it's not served.
 
 ## Quick Start
 ```bash
