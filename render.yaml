@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: recap-fuzzy-score-matcher
+    runtime: docker
+    region: singapore
+    plan: free
+    healthCheckPath: /healthz
+    envVars:
+      - key: RECAP_SERVICE_TOKEN
+        sync: false # secret — Render will prompt for the value when applying this Blueprint, never stored in git

@@ -489,6 +489,12 @@ def finalize_job(job_id):
 # No HTML UI is served here anymore — the Ordinat Dashboard is the only
 # frontend. Every route below requires the shared service token.
 
+@app.route('/healthz')
+def healthz():
+    """Unauthenticated on purpose — platform health checks (Render etc.) hit
+    this before any token exists. Reveals nothing beyond "process is alive"."""
+    return jsonify({'status': 'ok'}), 200
+
 @app.route('/process', methods=['POST'])
 @require_service_token
 def start_process():
