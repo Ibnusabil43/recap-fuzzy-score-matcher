@@ -1,0 +1,346 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Recap Matcher — Test Console</title>
+<style>
+  :root {
+    --bg:#0f1216; --panel:#171b21; --panel2:#1e242c; --line:#2a323c;
+    --text:#e6e9ee; --muted:#8b97a5; --accent:#4f9dff; --accent2:#3b82f6;
+    --ok:#37c871; --warn:#f2b23a; --block:#ff6b6b; --radius:10px;
+  }
+  * { box-sizing:border-box; }
+  body {
+    margin:0; background:var(--bg); color:var(--text);
+    font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+  }
+  header {
+    padding:16px 22px; border-bottom:1px solid var(--line);
+    display:flex; align-items:baseline; gap:12px; background:var(--panel);
+  }
+  header h1 { font-size:16px; margin:0; font-weight:600; }
+  header .sub { color:var(--muted); font-size:12px; }
+  main { max-width:1080px; margin:0 auto; padding:22px; display:grid; gap:18px; }
+  .panel { background:var(--panel); border:1px solid var(--line); border-radius:var(--radius); padding:18px; }
+  .panel h2 { margin:0 0 14px; font-size:13px; text-transform:uppercase; letter-spacing:.05em; color:var(--muted); }
+  .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:12px; }
+  label { display:block; font-size:12px; color:var(--muted); margin-bottom:5px; }
+  input, textarea, select {
+    width:100%; padding:9px 11px; background:var(--panel2); border:1px solid var(--line);
+    border-radius:8px; color:var(--text); font:inherit;
+  }
+  input[type=file] { padding:7px; }
+  textarea { resize:vertical; min-height:64px; font-family:ui-monospace,Menlo,monospace; font-size:12px; }
+  .row { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+  button {
+    padding:9px 16px; background:var(--accent2); color:#fff; border:0; border-radius:8px;
+    font:inherit; font-weight:600; cursor:pointer;
+  }
+  button:hover { background:var(--accent); }
+  button.ghost { background:transparent; border:1px solid var(--line); color:var(--text); font-weight:500; }
+  button:disabled { opacity:.4; cursor:not-allowed; }
+  .bar { height:10px; background:var(--panel2); border-radius:6px; overflow:hidden; }
+  .bar > span { display:block; height:100%; width:0; background:linear-gradient(90deg,var(--accent2),var(--accent)); transition:width .3s; }
+  .statusline { display:flex; justify-content:space-between; font-size:13px; margin-bottom:8px; }
+  pre.log {
+    background:#0b0e12; border:1px solid var(--line); border-radius:8px; padding:12px;
+    max-height:240px; overflow:auto; font-size:12px; color:#b7c2cf; white-space:pre-wrap;
+  }
+  .pill { display:inline-block; padding:2px 8px; border-radius:20px; font-size:11px; font-weight:600; }
+  .pill.warn { background:rgba(242,178,58,.15); color:var(--warn); }
+  .pill.block { background:rgba(255,107,107,.15); color:var(--block); }
+  .pill.done { background:rgba(55,200,113,.15); color:var(--ok); }
+  .review-group { border:1px solid var(--line); border-radius:8px; margin-bottom:12px; overflow:hidden; }
+  .review-group > .head { padding:9px 13px; background:var(--panel2); font-weight:600; font-size:12px; display:flex; gap:8px; align-items:center; }
+  .item { padding:11px 13px; border-top:1px solid var(--line); display:flex; gap:12px; align-items:flex-start; justify-content:space-between; }
+  .item .meta { flex:1; min-width:0; }
+  .item .meta .names { font-size:13px; }
+  .item .meta .detail { color:var(--muted); font-size:12px; margin-top:3px; }
+  .item .decide { display:flex; gap:6px; flex-shrink:0; }
+  .choice { display:block; margin-top:6px; font-size:12px; }
+  .toggle { padding:5px 11px; border-radius:6px; border:1px solid var(--line); background:transparent; color:var(--muted); cursor:pointer; font-size:12px; }
+  .toggle.on-accept { background:rgba(55,200,113,.18); color:var(--ok); border-color:transparent; }
+  .toggle.on-reject { background:rgba(255,107,107,.18); color:var(--block); border-color:transparent; }
+  .muted { color:var(--muted); }
+  a.dl { color:var(--accent); font-weight:600; text-decoration:none; }
+  .hint { font-size:11px; color:var(--muted); margin-top:6px; }
+  .hidden { display:none; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Recap Fuzzy Score Matcher</h1>
+  <span class="sub">Test Console · drives /process → /status → /review → /download</span>
+</header>
+
+<main>
+  <!-- CONFIG -->
+  <section class="panel">
+    <h2>Connection</h2>
+    <div class="grid">
+      <div>
+        <label>Base URL</label>
+        <input id="baseUrl" value="http://localhost:5000" placeholder="http://localhost:5000">
+      </div>
+      <div>
+        <label>Bearer token (RECAP_SERVICE_TOKEN)</label>
+        <input id="token" type="password" placeholder="shared secret">
+      </div>
+    </div>
+    <p class="hint">Stored in your browser's localStorage only. If the page isn't served same-origin by the API,
+      the browser will block calls (CORS) — serve it via <code>GET /console</code> or enable CORS for local dev.</p>
+  </section>
+
+  <!-- START JOB -->
+  <section class="panel">
+    <h2>Start a job</h2>
+    <div class="grid">
+      <div><label>RAW file (.xlsx)</label><input id="rawFile" type="file" accept=".xlsx"></div>
+      <div><label>REKAP template (.xlsx)</label><input id="rekapFile" type="file" accept=".xlsx"></div>
+      <div><label>Threshold</label><input id="threshold" type="number" step="0.01" min="0" max="1" value="0.78"></div>
+      <div><label>TGL PEMERIKSAAN</label><input id="tglPemeriksaan" placeholder="09/07/2026"></div>
+      <div><label>PENDIDIKAN</label><input id="pendidikan" placeholder="SMAN 1 GEGESIK"></div>
+    </div>
+    <div style="margin-top:12px">
+      <label>manual_overrides (JSON, optional)</label>
+      <textarea id="overrides" placeholder='{ "NAMA DI REKAP": "NAMA DI RAW" }'></textarea>
+    </div>
+    <div class="row" style="margin-top:14px">
+      <button id="startBtn">Start processing</button>
+      <span id="jobIdLbl" class="muted"></span>
+    </div>
+  </section>
+
+  <!-- STATUS -->
+  <section class="panel hidden" id="statusPanel">
+    <h2>Status</h2>
+    <div class="statusline">
+      <span id="statusText">—</span>
+      <span id="progressPct" class="muted">0%</span>
+    </div>
+    <div class="bar"><span id="progressBar"></span></div>
+    <pre class="log hidden" id="logBox"></pre>
+    <div id="resultBox" class="row hidden" style="margin-top:14px">
+      <button id="downloadBtn">Download hasil .xlsx</button>
+      <span id="statsLbl" class="muted"></span>
+    </div>
+  </section>
+
+  <!-- REVIEW -->
+  <section class="panel hidden" id="reviewPanel">
+    <h2>Review — data yang perlu dikonfirmasi</h2>
+    <p class="muted" id="reviewSummary"></p>
+    <div id="reviewList"></div>
+    <div class="row" style="margin-top:8px">
+      <button id="submitReviewBtn">Submit keputusan</button>
+      <button class="ghost" id="acceptAllBtn">Terima semua</button>
+      <button class="ghost" id="rejectAllBtn">Tolak semua</button>
+    </div>
+  </section>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+const state = { jobId:null, poll:null, pending:[], decisions:{}, choices:{} };
+
+// ---- persist connection ----
+for (const k of ['baseUrl','token']) {
+  const v = localStorage.getItem('rc_'+k); if (v) $(k).value = v;
+  $(k).addEventListener('change', e => localStorage.setItem('rc_'+k, e.target.value));
+}
+const api = p => $('baseUrl').value.replace(/\/$/,'') + p;
+const authHeader = () => ({ 'Authorization': 'Bearer ' + $('token').value });
+
+// ---- start ----
+$('startBtn').addEventListener('click', async () => {
+  const raw = $('rawFile').files[0], rekap = $('rekapFile').files[0];
+  if (!raw || !rekap) { alert('Pilih file RAW dan REKAP dulu.'); return; }
+  const fd = new FormData();
+  fd.append('raw_file', raw);
+  fd.append('rekap_file', rekap);
+  fd.append('threshold', $('threshold').value || '0.78');
+  if ($('tglPemeriksaan').value) fd.append('tgl_pemeriksaan', $('tglPemeriksaan').value);
+  if ($('pendidikan').value) fd.append('pendidikan', $('pendidikan').value);
+  if ($('overrides').value.trim()) fd.append('manual_overrides', $('overrides').value.trim());
+
+  $('startBtn').disabled = true;
+  try {
+    const r = await fetch(api('/process'), { method:'POST', headers:authHeader(), body:fd });
+    if (!r.ok) throw new Error('HTTP '+r.status+' — '+(await r.text()));
+    const { job_id } = await r.json();
+    state.jobId = job_id;
+    $('jobIdLbl').textContent = 'job_id: ' + job_id;
+    $('statusPanel').classList.remove('hidden');
+    $('reviewPanel').classList.add('hidden');
+    $('resultBox').classList.add('hidden');
+    startPolling();
+  } catch (e) {
+    alert('Gagal start: ' + e.message);
+  } finally {
+    $('startBtn').disabled = false;
+  }
+});
+
+// ---- polling ----
+function startPolling() {
+  clearInterval(state.poll);
+  state.poll = setInterval(pollStatus, 1200);
+  pollStatus();
+}
+async function pollStatus() {
+  if (!state.jobId) return;
+  let j;
+  try {
+    const r = await fetch(api('/status/' + state.jobId), { headers:authHeader() });
+    if (!r.ok) throw new Error('HTTP '+r.status);
+    j = await r.json();
+  } catch (e) { $('statusText').textContent = 'poll error: ' + e.message; return; }
+
+  $('statusText').textContent = j.status;
+  const pct = j.progress ?? 0;
+  $('progressPct').textContent = pct + '%';
+  $('progressBar').style.width = pct + '%';
+
+  if (j.log) {
+    $('logBox').classList.remove('hidden');
+    $('logBox').textContent = JSON.stringify(j.log, null, 2);
+  }
+
+  if (j.status === 'awaiting_review') {
+    clearInterval(state.poll);
+    renderReview(j.pending || []);
+  } else if (j.status === 'done') {
+    clearInterval(state.poll);
+    $('reviewPanel').classList.add('hidden');
+    $('resultBox').classList.remove('hidden');
+    $('downloadBtn').dataset.file = j.download_filename || '';
+    if (j.log) $('statsLbl').textContent =
+      `${j.log.total_scores ?? 0} skor · ${j.log.yellow_count ?? 0} baris kuning`;
+  } else if (j.status === 'error') {
+    clearInterval(state.poll);
+    $('statusText').innerHTML = '<span class="pill block">error</span> ' + (j.error || '');
+  }
+}
+
+// ---- review rendering ----
+const REASON_LABEL = {
+  // fall back to raw reason string if not listed
+  N1:'Match borderline', N2:'Match ambigu (>=2 kandidat)', N3:'Tabrakan (1 RAW → banyak siswa)',
+  N4:'Beda kelas (cross-kelas)', N5:'Nama tester/ngawur', N6:'Nama duplikat di gugus', N7:'RAW tak terpakai',
+  C1:'Jawaban lurus (straight-lining)', C2:'Jawaban terlalu sedikit', C3:'Lembar jawaban kosong',
+  C4:'Token pilihan tak dikenal', C5:'Nilai RIASEC bukan Ya/Tidak',
+  V1:'Score RAW bukan angka', V2:'GE: selisih besar vs RAW', V3:'GE nol tapi banyak jawaban',
+  V4:'Score di luar rentang', V5:'Baris RAW duplikat, score bentrok',
+  D1:'Tanggal lahir tak terbaca', D2:'Tanggal ambigu', D3:'Umur janggal', D4:'Biodata bentrok antar sheet',
+  S1:'Sheet RAW hilang', S2:'Kolom REKAP hilang', S3:'Jumlah kolom tak cocok', S4:'Format kelas janggal',
+};
+function reasonKey(reason='') { return (reason.split('_')[0] || reason).toUpperCase(); }
+function reasonText(reason='') { return REASON_LABEL[reasonKey(reason)] || reason || 'Perlu konfirmasi'; }
+
+function renderReview(pending) {
+  state.pending = pending;
+  state.decisions = {}; state.choices = {};
+  $('reviewPanel').classList.remove('hidden');
+  const blocks = pending.filter(p => p.severity === 'block').length;
+  $('reviewSummary').textContent =
+    `${pending.length} item perlu ditinjau — ${blocks} wajib diputuskan (block), sisanya peringatan.`;
+
+  // group by reason key
+  const groups = {};
+  for (const p of pending) (groups[reasonKey(p.reason)] ??= []).push(p);
+
+  const wrap = $('reviewList'); wrap.innerHTML = '';
+  for (const [key, items] of Object.entries(groups)) {
+    const sev = items.some(i => i.severity === 'block') ? 'block' : 'warn';
+    const g = document.createElement('div'); g.className = 'review-group';
+    g.innerHTML = `<div class="head"><span class="pill ${sev}">${sev}</span>
+      ${reasonText(items[0].reason)} <span class="muted">· ${items.length}</span></div>`;
+    for (const it of items) g.appendChild(renderItem(it));
+    wrap.appendChild(g);
+  }
+}
+
+function renderItem(it) {
+  const el = document.createElement('div'); el.className = 'item';
+  const score = (it.score != null) ? ` · <span class="muted">skor ${it.score}</span>` : '';
+  let candHtml = '';
+  if (Array.isArray(it.candidates) && it.candidates.length) {
+    candHtml = it.candidates.map((c, i) =>
+      `<label class="choice"><input type="radio" name="cand_${it.id}" value="${i}"> ${c.nama_raw ?? c} ${c.score!=null?`(${c.score})`:''}</label>`
+    ).join('');
+  }
+  el.innerHTML = `
+    <div class="meta">
+      <div class="names"><b>${it.nama_rekap ?? '?'}</b> ↔ ${it.nama_raw ?? '—'}
+        <span class="muted">[${it.subtes ?? ''}${it.gugus!=null?` · Gugus ${it.gugus}`:''}]</span>${score}</div>
+      <div class="detail">${it.detail ?? reasonText(it.reason)}</div>
+      ${candHtml}
+    </div>
+    <div class="decide">
+      <button class="toggle" data-act="accept">Terima</button>
+      <button class="toggle" data-act="reject">Tolak</button>
+    </div>`;
+  const btns = el.querySelectorAll('.toggle');
+  btns.forEach(b => b.addEventListener('click', () => {
+    const accept = b.dataset.act === 'accept';
+    state.decisions[it.id] = accept;
+    btns.forEach(x => x.className = 'toggle');
+    b.classList.add(accept ? 'on-accept' : 'on-reject');
+  }));
+  if (candHtml) el.querySelectorAll(`input[name=cand_${it.id}]`).forEach(r =>
+    r.addEventListener('change', e => { state.choices[it.id] = Number(e.target.value); }));
+  return el;
+}
+
+$('acceptAllBtn').addEventListener('click', () => bulk(true));
+$('rejectAllBtn').addEventListener('click', () => bulk(false));
+function bulk(v) {
+  for (const p of state.pending) {
+    state.decisions[p.id] = v;
+    document.querySelectorAll(`.item`).forEach(()=>{});
+  }
+  // reflect visually
+  document.querySelectorAll('.review-group .item').forEach((row, i) => {
+    const btns = row.querySelectorAll('.toggle');
+    btns.forEach(x => x.className = 'toggle');
+    btns[v ? 0 : 1].classList.add(v ? 'on-accept' : 'on-reject');
+  });
+}
+
+$('submitReviewBtn').addEventListener('click', async () => {
+  $('submitReviewBtn').disabled = true;
+  try {
+    const body = { decisions:{}, choices: state.choices };
+    for (const [id, v] of Object.entries(state.decisions)) body.decisions[id] = !!v;
+    const r = await fetch(api('/review/' + state.jobId), {
+      method:'POST', headers:{ ...authHeader(), 'Content-Type':'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!r.ok) throw new Error('HTTP '+r.status+' — '+(await r.text()));
+    $('reviewPanel').classList.add('hidden');
+    startPolling();
+  } catch (e) {
+    alert('Gagal submit review: ' + e.message);
+  } finally {
+    $('submitReviewBtn').disabled = false;
+  }
+});
+
+// ---- authenticated download ----
+$('downloadBtn').addEventListener('click', async () => {
+  const file = $('downloadBtn').dataset.file;
+  if (!file) return;
+  try {
+    const r = await fetch(api('/download/' + encodeURIComponent(file)), { headers:authHeader() });
+    if (!r.ok) throw new Error('HTTP '+r.status);
+    const blob = await r.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = file; a.click();
+    URL.revokeObjectURL(url);
+  } catch (e) { alert('Gagal download: ' + e.message); }
+});
+</script>
+</body>
+</html>

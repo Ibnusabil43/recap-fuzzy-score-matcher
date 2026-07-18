@@ -203,6 +203,141 @@ def find_id_sheet(raw_path, subtes_sheets):
     return res or ('SE' if 'SE' in subtes_sheets else subtes_sheets[0] if subtes_sheets else None)
 
 
+# ── Template Layout ──
+# The v2 Rekap template uses a two-row header: row 1 holds merged section labels
+# (BIODATA / EPPS / RIASEC / GAYA BELAJAR) and row 2 holds the field headers
+# (NOMOR, NAMA, JK, the Score-subtes labels, and per-question numbers), with data
+# from row 3. Older single-row templates put field headers in row 1 and data from
+# row 2. Everything below auto-detects which layout it's looking at so the
+# existing Score-copy path keeps working unchanged on both.
+
+# Answer-type sections whose columns are a numbered question block, not a single
+# score cell. Keys are the row-1 section labels as they appear in the template.
+ANSWER_SECTION_LABELS = {'EPPS', 'RIASEC', 'GAYA BELAJAR'}
+
+def detect_header_layout(ws):
+    """Return (header_row, data_start) by locating the row that holds 'NAMA'.
+    Two-row template -> (2, 3); legacy single-row template -> (1, 2)."""
+    for hr in (1, 2):
+        for col in range(1, ws.max_column + 1):
+            v = ws.cell(row=hr, column=col).value
+            if v is not None and str(v).strip().upper() == 'NAMA':
+                return hr, hr + 1
+    return 1, 2  # fallback: legacy behavior
+
+def read_field_headers(ws, header_row):
+    """Map field-label -> column from header_row, skipping the numeric
+    per-question cells (1,2,3,...) that belong to answer-section blocks."""
+    headers = {}
+    for col in range(1, ws.max_column + 1):
+        v = ws.cell(row=header_row, column=col).value
+        if v is None:
+            continue
+        if isinstance(v, (int, float)) and not isinstance(v, bool):
+            continue  # question number, not a field label
+        sv = str(v).strip()
+        if not sv or sv.isdigit():
+            continue
+        headers[sv] = col
+    return headers
+
+def map_answer_sections(ws, header_row):
+    """Return {section_label: {question_num(int): column}} for the answer-type
+    blocks. Section spans come from the merged label band in row 1; question
+    numbers come from header_row. Empty on legacy templates that lack these
+    blocks."""
+    label_cols = {}
+    for col in range(1, ws.max_column + 1):
+        v = ws.cell(row=1, column=col).value
+        if v is not None and str(v).strip().upper() in ANSWER_SECTION_LABELS:
+            label_cols[col] = str(v).strip().upper()
+    if not label_cols:
+        return {}
+    # resolve each label's column span from the merged range it anchors
+    spans = {}
+    for mr in ws.merged_cells.ranges:
+        if mr.min_row == 1 and mr.min_col in label_cols:
+            spans[label_cols[mr.min_col]] = (mr.min_col, mr.max_col)
+    # non-merged single-cell labels: span to the column before the next label/end
+    starts = sorted(label_cols)
+    for i, c0 in enumerate(starts):
+        lbl = label_cols[c0]
+        if lbl in spans:
+            continue
+        c1 = (starts[i + 1] - 1) if i + 1 < len(starts) else ws.max_column
+        spans[lbl] = (c0, c1)
+    sections = {}
+    for lbl, (c0, c1) in spans.items():
+        qmap = {}
+        for col in range(c0, c1 + 1):
+            hv = ws.cell(row=header_row, column=col).value
+            if isinstance(hv, (int, float)) and not isinstance(hv, bool):
+                qmap[int(hv)] = col
+            elif hv is not None and str(hv).strip().isdigit():
+                qmap[int(str(hv).strip())] = col
+        if qmap:
+            sections[lbl] = qmap
+    return sections
+
+
+# ── Answer-choice subtests (EPPS / RIASEC / GB) ──
+# These RAW sheets carry one answer string per question (no single Score). We
+# name-match the student exactly like a normal subtest, then write the parsed
+# choice token ("A." / "b." / "Ya") into each question column of the matching
+# REKAP section block — no value copy, no score computation.
+
+# RAW sheet name -> REKAP section label (row-1 merged label).
+RAW_TO_SECTION = {'EPPS': 'EPPS', 'RIASEC': 'RIASEC', 'GB': 'GAYA BELAJAR'}
+
+def extract_choice(val):
+    """Take the leading choice token from an answer, dot included, case
+    preserved: "A. Saya suka..." -> "A.", "b. Mendengarkan..." -> "b.".
+    Values without a letter+dot prefix (RIASEC's "Ya"/"Tidak") pass through
+    trimmed. Blank/NaN -> None (write nothing / empty cell)."""
+    if pd.isna(val): return None
+    s = str(val).strip()
+    if not s: return None
+    m = re.match(r'^([A-Za-z]+)\.', s)
+    return m.group(0) if m else s
+
+def detect_answer_sheets(raw_path):
+    """RAW sheets shaped as per-question answers: NAMA LENGKAP + KELAS, no
+    Score, followed by numbered question columns. Returns [(sheet, section)]."""
+    wb = load_workbook(raw_path, read_only=True, data_only=True)
+    out = []
+    for sn in wb.sheetnames:
+        ws = wb[sn]
+        row1 = next(ws.iter_rows(min_row=1, max_row=1, values_only=True), ())
+        hdrs = [str(h).strip() if h else "" for h in row1]
+        up = [h.upper() for h in hdrs]
+        if 'NAMA LENGKAP' not in up or 'KELAS' not in up: continue
+        if 'SCORE' in up: continue  # score-type -> existing path
+        if not any(re.match(r'^\d+\.', h) for h in hdrs): continue
+        section = RAW_TO_SECTION.get(sn.strip().upper(), sn.strip().upper())
+        out.append((sn, section))
+    wb.close()
+    return out
+
+def read_raw_answers(raw_path, sheet_name):
+    """Return (df, qcols): NAMA LENGKAP + KELAS + every numbered question
+    column in sheet order, plus a normalized-name column."""
+    df = pd.read_excel(raw_path, sheet_name=sheet_name)
+    qcols = [c for c in df.columns if re.match(r'^\d+\.', str(c).strip())]
+    keep = [c for c in ['NAMA LENGKAP', 'KELAS'] + qcols if c in df.columns]
+    out = df[keep].copy()
+    out['_norm'] = out['NAMA LENGKAP'].apply(normalize_name)
+    return out, qcols
+
+def _best_name_match(gn, mt, pool):
+    """Highest calc_match over a RAW pool; a confident manual override wins."""
+    best_s, best_i = 0, None
+    for ri, r in pool.iterrows():
+        s = calc_match(gn, r['_norm'])
+        if mt and calc_match(mt, r['_norm']) > 0.9: s = 0.95
+        if s > best_s: best_s, best_i = s, ri
+    return best_s, best_i
+
+
 # ── Background Job ──
 
 def _remove_file(path):
@@ -288,10 +423,9 @@ def process_job(job_id, raw_path, rekap_path, overrides, threshold, tgl_pemeriks
             job['status'] = 'error'; job['error'] = 'Tidak ada sheet Gugus'; return
 
         ws0 = wb[gsheets[0]]
-        headers = {}
-        for col in range(1, ws0.max_column+1):
-            v = ws0.cell(row=1, column=col).value
-            if v: headers[str(v).strip()] = col
+        header_row, data_start = detect_header_layout(ws0)
+        headers = read_field_headers(ws0, header_row)
+        answer_sections = map_answer_sections(ws0, header_row)
         name_col = headers.get('NAMA', 2)
         rekap_subtes = [s for s in subtes_sheets if s in headers]
 
@@ -302,7 +436,7 @@ def process_job(job_id, raw_path, rekap_path, overrides, threshold, tgl_pemeriks
             gugus_nums.append(gnum)
             ws = wb[sn]
             gugus_rows[gnum] = {}
-            for row in range(2, ws.max_row+1):
+            for row in range(data_start, ws.max_row+1):
                 cv = ws.cell(row=row, column=name_col).value
                 if cv: gugus_rows[gnum][row] = normalize_name(cv)
             gugus_all_names[gnum] = list(gugus_rows[gnum].values())
@@ -361,11 +495,63 @@ def process_job(job_id, raw_path, rekap_path, overrides, threshold, tgl_pemeriks
                 job['progress'] = min(38 + int(40*step/max(total_steps,1)), 78)
             job['status'] = f'Mencocokkan {subtes}...'
 
+        # ── Answer-choice subtests (EPPS / RIASEC / GB) ──
+        # Same 3-tier name match as above, but write parsed choice tokens across
+        # the section's question-number columns instead of one Score cell.
+        if answer_sections:
+            job['status'] = 'Mencocokkan jawaban...'
+            for sn, section in detect_answer_sheets(raw_path):
+                if section not in answer_sections: continue
+                adf, qcols = read_raw_answers(raw_path, sn)
+                is_prok = adf['KELAS'].astype(str).str.contains('Proktor', na=False)
+                aprok = adf[is_prok].drop_duplicates(subset=['_norm'], keep='first')
+                anorm = adf[~is_prok].drop_duplicates(subset=['_norm','KELAS'], keep='first')
+                qmap = answer_sections[section]
+                n_write = min(len(qcols), len(qmap))
+                for gnum in gugus_nums:
+                    if gnum not in gugus_rows: continue
+                    kstr = f'{kelas_fmt} {gnum}' if kelas_fmt != 'XI.' else f'XI.{gnum}'
+                    ws = wb[f'Gugus {gnum}']
+                    own = anorm[anorm['KELAS']==kstr]; other = anorm[anorm['KELAS']!=kstr]
+                    for row_idx, gn in gugus_rows[gnum].items():
+                        mt = norm_ov.get(gn)
+                        best_s, best_i, src, pool = 0, None, None, None
+                        bs, bi = _best_name_match(gn, mt, own)
+                        if bs>=threshold and bi is not None:
+                            best_s, best_i, src, pool = bs, bi, 'own', anorm
+                        if best_i is None:
+                            bs, bi = _best_name_match(gn, mt, other)
+                            if bs>=threshold and bi is not None:
+                                rr = anorm.loc[bi]; rg = extract_kelas_num(rr['KELAS'], kelas_fmt)
+                                claimed = rg in gugus_all_names and any(calc_match(og, rr['_norm'])>=threshold for og in gugus_all_names[rg])
+                                if not claimed: best_s, best_i, src, pool = bs, bi, 'cross', anorm
+                        if best_i is None and len(aprok)>0:
+                            bs, bi = _best_name_match(gn, mt, aprok)
+                            if bs>=threshold and bi is not None:
+                                best_s, best_i, src, pool = bs, bi, 'proktor', aprok
+                        if best_i is None: continue
+                        row = pool.loc[best_i]
+                        answers = [extract_choice(row[qcols[i]]) for i in range(n_write)]
+                        targets = [qmap.get(i+1) for i in range(n_write)]
+                        if best_s >= AUTO_CONFIDENCE:
+                            for col, val in zip(targets, answers):
+                                if col and val is not None: ws.cell(row=row_idx, column=col, value=val)
+                            log['total_scores'] += 1
+                            if src != 'own': log['cross_kelas'] += 1
+                        else:
+                            pending.append({
+                                'id': len(pending), 'gugus': gnum, 'subtes': section,
+                                'nama_rekap': gn, 'nama_raw': str(row['NAMA LENGKAP']),
+                                'score': round(best_s,3), 'source': src, 'kind': 'answer_choice',
+                                '_row_idx': row_idx, '_answers': answers, '_targets': targets,
+                            })
+
         ctx = {'wb':wb,'headers':headers,'name_col':name_col,'gugus_rows':gugus_rows,
                'gugus_nums':gugus_nums,'rekap_subtes':rekap_subtes,'raw_path':raw_path,
                'subtes_sheets':subtes_sheets,'all_raw':all_raw,'all_proktor':all_proktor,
                'kelas_fmt':kelas_fmt,'tgl_pemeriksaan':tgl_pemeriksaan,'pendidikan':pendidikan,
-               'log':log,'threshold':threshold,'norm_ov':norm_ov}
+               'log':log,'threshold':threshold,'norm_ov':norm_ov,
+               'header_row':header_row,'data_start':data_start,'answer_sections':answer_sections}
         if pending:
             job['_ctx'] = ctx; job['pending'] = pending
             job['status'] = 'awaiting_review'; job['progress'] = 78
@@ -386,6 +572,7 @@ def finalize_job(job_id):
     all_raw = ctx['all_raw']; all_proktor = ctx['all_proktor']
     kelas_fmt = ctx['kelas_fmt']; tgl_pemeriksaan = ctx['tgl_pemeriksaan']; pendidikan = ctx['pendidikan']
     log = ctx['log']; threshold = ctx['threshold']; norm_ov = ctx['norm_ov']
+    data_start = ctx.get('data_start', 2)
     try:
         # ── Identity ──
         job['status'] = 'Mengisi identitas...'; job['progress'] = 80
@@ -431,7 +618,7 @@ def finalize_job(job_id):
 
         for gnum in gugus_nums:
             ws = wb[f'Gugus {gnum}']
-            for row in range(2, ws.max_row+1):
+            for row in range(data_start, ws.max_row+1):
                 nm = ws.cell(row=row, column=name_col).value
                 if not nm: continue
                 # Fix TGL LAHIR format
@@ -454,7 +641,7 @@ def finalize_job(job_id):
         for gnum in gugus_nums:
             ws = wb[f'Gugus {gnum}']; ts,fc,yc=0,0,0
             yellow_names = []
-            for row in range(2, ws.max_row+1):
+            for row in range(data_start, ws.max_row+1):
                 nm = ws.cell(row=row, column=name_col).value
                 if not nm: continue
                 ts += 1
@@ -544,7 +731,12 @@ def submit_review(job_id):
     for item in j.get('pending', []):
         if decisions.get(str(item['id'])):
             ws = wb[f"Gugus {item['gugus']}"]
-            ws.cell(row=item['_row_idx'], column=item['_col_idx'], value=item['_value'])
+            if item.get('kind') == 'answer_choice':
+                for col, val in zip(item['_targets'], item['_answers']):
+                    if col and val is not None:
+                        ws.cell(row=item['_row_idx'], column=col, value=val)
+            else:
+                ws.cell(row=item['_row_idx'], column=item['_col_idx'], value=item['_value'])
             log['total_scores'] += 1
             if item['source'] != 'own': log['cross_kelas'] += 1
     j['pending'] = []
