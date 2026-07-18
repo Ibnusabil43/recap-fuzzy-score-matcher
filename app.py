@@ -64,13 +64,18 @@ def _ordered_word_match(short_w, long_w):
     """Match words in order. A short token (<=4 chars) that's an exact prefix
     of a long-side word counts as a partial (initial/abbreviation) match —
     covers both single-letter initials ("M" -> MUHAMMAD) and the common
-    Indonesian 3-4 letter prefix abbreviations ("Moh"/"Muh"/"Moch" -> MUHAMMAD)."""
+    Indonesian 3-4 letter prefix abbreviations ("Moh"/"Muh"/"Moch" -> MUHAMMAD).
+    A token that exactly equals two CONSECUTIVE long-side words concatenated
+    also counts as a full match — covers a compact-vs-split spelling of the
+    same name ("AZZAHRA" == "AZ"+"ZAHRA"), which the prefix rule above can't
+    reach since it only ever compares one short token to one long word."""
     li, matched = 0, 0
     for sw in short_w:
         for j in range(li, len(long_w)):
             lw = long_w[j]
             if sw == lw: matched += 1; li = j+1; break
             elif len(sw) <= 4 and lw.startswith(sw): matched += 0.8; li = j+1; break
+            elif j + 1 < len(long_w) and sw == lw + long_w[j+1]: matched += 1; li = j+2; break
     return matched
 
 def calc_match(a, b):
@@ -671,20 +676,31 @@ def process_job(job_id, raw_path, rekap_path, overrides, threshold, tgl_pemeriks
             display, kelas, sheets = info['nama'], info['kelas'], info['sheets']
             gnum = extract_kelas_num(kelas, kelas_fmt)
             if gnum not in gugus_set: continue  # class not in this REKAP -> out of scope
-            best = max((calc_match(k, rn) for rn in roster_all), default=0)
+            # Track which roster name produced the best score too, not just the
+            # score itself — a low score alone is a dead end; the closest
+            # candidate name lets an admin manually confirm a match calc_match
+            # couldn't clear on its own (e.g. a vowel-dropped abbreviation).
+            best, best_candidate = 0, None
+            for rn in roster_all:
+                sc = calc_match(k, rn)
+                if sc > best: best, best_candidate = sc, rn
             if best >= threshold: continue      # student is represented somewhere
             sheet_list = ', '.join(sorted(sheets))
-            leftover.append((gnum, display, kelas, round(best, 3), sheet_list))
+            leftover.append((gnum, display, kelas, round(best, 3), sheet_list, best_candidate))
+            # closest_candidate is a separate structured field (not folded into
+            # `detail`) so the dashboard can render it on its own, in English,
+            # without duplicating/mixing it into this Indonesian sentence.
+            detail = (f'Ada di RAW (kelas {kelas}) tapi tidak ada di roster Gugus {gnum} '
+                      f'— muncul di sheet: {sheet_list}')
             pending.append({
                 'id': len(pending), 'gugus': gnum, 'subtes': sheet_list or '-', 'kind': 'leftover',
                 'nama_rekap': '(tidak ada di rekap)', 'nama_raw': str(display),
-                'score': round(best, 3), 'source': 'raw',
-                'reason': 'N7_leftover', 'severity': 'warn',
-                'detail': (f'Ada di RAW (kelas {kelas}) tapi tidak ada di roster Gugus {gnum} '
-                          f'— muncul di sheet: {sheet_list}'),
+                'score': round(best, 3), 'source': 'raw', 'closest_candidate': best_candidate,
+                'reason': 'N7_leftover', 'severity': 'warn', 'detail': detail,
             })
-        log['leftover_raw'] = [{'gugus': g, 'nama': d, 'kelas': str(kl), 'best': b, 'subtes': sl}
-                               for g, d, kl, b, sl in leftover]
+        log['leftover_raw'] = [{'gugus': g, 'nama': d, 'kelas': str(kl), 'best': b, 'subtes': sl,
+                                 'closest_candidate': cn}
+                               for g, d, kl, b, sl, cn in leftover]
 
         ctx = {'wb':wb,'headers':headers,'name_col':name_col,'gugus_rows':gugus_rows,
                'gugus_nums':gugus_nums,'rekap_subtes':rekap_subtes,'raw_path':raw_path,
