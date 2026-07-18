@@ -1,0 +1,462 @@
+{
+ "61": [
+  {
+   "kw": "bunga",
+   "w": 2
+  },
+  {
+   "kw": "kembang",
+   "w": 2
+  },
+  {
+   "kw": "perdu",
+   "w": 2
+  },
+  {
+   "kw": "tumbuh-tumbuhan",
+   "w": 1
+  },
+  {
+   "kw": "tumbuhan",
+   "w": 1
+  },
+  {
+   "kw": "tanaman",
+   "w": 1
+  },
+  {
+   "kw": "tangkai",
+   "w": 1
+  },
+  {
+   "kw": "harum",
+   "w": 1
+  }
+ ],
+ "62": [
+  {
+   "kw": "alat indra",
+   "w": 2
+  },
+  {
+   "kw": "indra",
+   "w": 2
+  },
+  {
+   "kw": "panca indra",
+   "w": 2
+  },
+  {
+   "kw": "organ",
+   "w": 1
+  },
+  {
+   "kw": "organ tubuh",
+   "w": 1
+  },
+  {
+   "kw": "alat tubuh",
+   "w": 1
+  },
+  {
+   "kw": "bagian tubuh",
+   "w": 1
+  }
+ ],
+ "63": [
+  {
+   "kw": "hablur",
+   "w": 2
+  },
+  {
+   "kw": "kristal",
+   "w": 2
+  },
+  {
+   "kw": "zat arang",
+   "w": 2
+  },
+  {
+   "kw": "berkilau",
+   "w": 1
+  },
+  {
+   "kw": "berkilauanan",
+   "w": 1
+  },
+  {
+   "kw": "mengkilat",
+   "w": 1
+  },
+  {
+   "kw": "bening",
+   "w": 1
+  }
+ ],
+ "64": [
+  {
+   "kw": "cuaca",
+   "w": 2
+  },
+  {
+   "kw": "musim",
+   "w": 2
+  },
+  {
+   "kw": "air",
+   "w": 1
+  },
+  {
+   "kw": "basah",
+   "w": 1
+  },
+  {
+   "kw": "gejala alam",
+   "w": 1
+  }
+ ],
+ "65": [
+  {
+   "kw": "pembawa berita",
+   "w": 2
+  },
+  {
+   "kw": "alat perhubungan",
+   "w": 2
+  },
+  {
+   "kw": "alat komunikasi",
+   "w": 2
+  },
+  {
+   "kw": "pos",
+   "w": 1
+  },
+  {
+   "kw": "p.t.t",
+   "w": 1
+  },
+  {
+   "kw": "telekomunikasi",
+   "w": 1
+  },
+  {
+   "kw": "perhubungan",
+   "w": 1
+  },
+  {
+   "kw": "komunikasi",
+   "w": 1
+  }
+ ],
+ "66": [
+  {
+   "kw": "alat optik",
+   "w": 2
+  },
+  {
+   "kw": "optik",
+   "w": 2
+  },
+  {
+   "kw": "lensa",
+   "w": 1
+  }
+ ],
+ "67": [
+  {
+   "kw": "alat pencernaan",
+   "w": 2
+  },
+  {
+   "kw": "jalan makanan",
+   "w": 1
+  },
+  {
+   "kw": "perut",
+   "w": 1
+  },
+  {
+   "kw": "isi perut",
+   "w": 1
+  },
+  {
+   "kw": "pencernaan",
+   "w": 1
+  },
+  {
+   "kw": "pencernaan makanan",
+   "w": 1
+  }
+ ],
+ "68": [
+  {
+   "kw": "penyebut jumlah",
+   "w": 2
+  },
+  {
+   "kw": "pengertian jumlah",
+   "w": 2
+  },
+  {
+   "kw": "jumlah",
+   "w": 2
+  },
+  {
+   "kw": "kuantitas",
+   "w": 2
+  },
+  {
+   "kw": "mengukur",
+   "w": 1
+  },
+  {
+   "kw": "ukuran",
+   "w": 1
+  },
+  {
+   "kw": "ukur",
+   "w": 1
+  }
+ ],
+ "69": [
+  {
+   "kw": "bibit",
+   "w": 2
+  },
+  {
+   "kw": "bakal",
+   "w": 2
+  },
+  {
+   "kw": "alat pembiak",
+   "w": 2
+  },
+  {
+   "kw": "permulaan kehidupan",
+   "w": 2
+  },
+  {
+   "kw": "sel",
+   "w": 1
+  },
+  {
+   "kw": "pembiakan",
+   "w": 1
+  },
+  {
+   "kw": "perkembangbiakan",
+   "w": 1
+  },
+  {
+   "kw": "berkembangbiak",
+   "w": 1
+  }
+ ],
+ "70": [
+  {
+   "kw": "simbol",
+   "w": 2
+  },
+  {
+   "kw": "lambang",
+   "w": 2
+  },
+  {
+   "kw": "tanda",
+   "w": 2
+  },
+  {
+   "kw": "nama",
+   "w": 1
+  },
+  {
+   "kw": "pengenal",
+   "w": 1
+  },
+  {
+   "kw": "tanda pengenal",
+   "w": 1
+  }
+ ],
+ "71": [
+  {
+   "kw": "makhluk",
+   "w": 2
+  },
+  {
+   "kw": "makhluk hidup",
+   "w": 2
+  },
+  {
+   "kw": "organisme",
+   "w": 2
+  },
+  {
+   "kw": "tumbuh",
+   "w": 1
+  },
+  {
+   "kw": "biologi",
+   "w": 1
+  },
+  {
+   "kw": "ilmu hayat",
+   "w": 1
+  },
+  {
+   "kw": "ilmu hayati",
+   "w": 1
+  }
+ ],
+ "72": [
+  {
+   "kw": "wadah",
+   "w": 2
+  },
+  {
+   "kw": "tempat mengisi",
+   "w": 2
+  },
+  {
+   "kw": "tempat penyimpan",
+   "w": 2
+  },
+  {
+   "kw": "tempat penyimpanan",
+   "w": 2
+  },
+  {
+   "kw": "tempat susuatu",
+   "w": 1
+  },
+  {
+   "kw": "alat",
+   "w": 1
+  },
+  {
+   "kw": "tempat",
+   "w": 1
+  },
+  {
+   "kw": "benda",
+   "w": 1
+  }
+ ],
+ "73": [
+  {
+   "kw": "pengertian waktu",
+   "w": 2
+  },
+  {
+   "kw": "batas",
+   "w": 2
+  },
+  {
+   "kw": "batas waktu",
+   "w": 2
+  },
+  {
+   "kw": "waktu",
+   "w": 1
+  },
+  {
+   "kw": "masa",
+   "w": 1
+  },
+  {
+   "kw": "saat",
+   "w": 1
+  },
+  {
+   "kw": "lamanya",
+   "w": 1
+  },
+  {
+   "kw": "lama",
+   "w": 1
+  }
+ ],
+ "74": [
+  {
+   "kw": "sifat-watak",
+   "w": 2
+  },
+  {
+   "kw": "sifat-karakter",
+   "w": 2
+  },
+  {
+   "kw": "sifat",
+   "w": 1
+  }
+ ],
+ "75": [
+  {
+   "kw": "regulator harga",
+   "w": 2
+  },
+  {
+   "kw": "regulasi harga",
+   "w": 2
+  },
+  {
+   "kw": "pengertian ekonomi",
+   "w": 2
+  },
+  {
+   "kw": "dagang",
+   "w": 1
+  },
+  {
+   "kw": "niaga",
+   "w": 1
+  },
+  {
+   "kw": "penjualan",
+   "w": 1
+  },
+  {
+   "kw": "pembelian",
+   "w": 1
+  },
+  {
+   "kw": "jual beli",
+   "w": 1
+  }
+ ],
+ "76": [
+  {
+   "kw": "pengertian ruang",
+   "w": 2
+  },
+  {
+   "kw": "penyebut ruang",
+   "w": 2
+  },
+  {
+   "kw": "arah",
+   "w": 1
+  },
+  {
+   "kw": "letak",
+   "w": 1
+  },
+  {
+   "kw": "penentuan daerah",
+   "w": 1
+  },
+  {
+   "kw": "tempat",
+   "w": 1
+  },
+  {
+   "kw": "ruang",
+   "w": 1
+  },
+  {
+   "kw": "penunjuk tempat",
+   "w": 1
+  }
+ ]
+}
