@@ -9,6 +9,7 @@ Psikotes Score Automation — API (v5)
   token. Never expose this service directly to the public internet.
 """
 import os, io, json, uuid, tempfile, threading, re, hmac
+from collections import Counter
 from functools import wraps
 from datetime import datetime
 from flask import Flask, request, send_file, jsonify
@@ -337,6 +338,94 @@ def _best_name_match(gn, mt, pool):
         if s > best_s: best_s, best_i = s, ri
     return best_s, best_i
 
+# Quality-gate thresholds ("ngawur" detection) — tunable.
+STRAIGHTLINE_FRAC = 0.90   # one choice dominating this fraction = suspect
+SPARSE_MIN_FRAC = 0.50     # answered below this fraction = suspect
+
+def assess_answer_quality(answers):
+    """Flag careless/nonsense ('ngawur') answer sheets. `answers` is the list of
+    parsed tokens for one student. Returns (reason, severity, detail) or None if
+    the response looks genuine."""
+    n_total = len(answers)
+    if n_total == 0: return None
+    vals = [a for a in answers if a not in (None, '')]
+    n_ans = len(vals)
+    if n_ans == 0:
+        return ('C3_blank', 'warn', 'Lembar jawaban kosong')
+    top, cnt = Counter(vals).most_common(1)[0]
+    if n_ans >= 5 and cnt / n_ans >= STRAIGHTLINE_FRAC:
+        return ('C1_straightlining', 'block',
+                f'{int(cnt/n_ans*100)}% jawaban sama ("{top}") — kemungkinan ngawur')
+    if n_ans / n_total < SPARSE_MIN_FRAC:
+        return ('C2_sparse', 'warn', f'hanya {n_ans}/{n_total} soal terisi')
+    return None
+
+GE_ZERO_MIN_ANSWERS = 5     # GE=0 despite this many filled answers = suspect
+
+def assess_ge(score_val, row_series, qcols):
+    """Flag a GE score of 0 that came from a student who *did* answer — usually
+    means gibberish/typo'd free-text (nothing matched the rubric), worth a look.
+    Returns (reason, severity, detail) or None."""
+    if score_val != 0: return None
+    n_ans = sum(1 for c in qcols
+                if not pd.isna(row_series.get(c)) and str(row_series.get(c)).strip())
+    if n_ans >= GE_ZERO_MIN_ANSWERS:
+        return ('V3_ge_zero', 'block',
+                f'GE = 0 padahal {n_ans} soal terisi — kemungkinan ngawur/typo')
+    return None
+
+
+# ── GE computed scoring ──
+# GE answers are free text, not a score. Each question has an ordered
+# keyword→weight rubric (from RUMUS GE.xlsx, extracted once into
+# data/ge_rubric.json, keyed by question number "61".."76"). Per question the
+# first exact keyword match wins (best synonym=2, looser term=1, else 0); the GE
+# value is the sum (0–32). The RAW "Score" column is ignored — recomputed here.
+
+GE_RUBRIC = {}
+try:
+    _ge_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data', 'ge_rubric.json')
+    with open(_ge_path, encoding='utf-8') as _f:
+        GE_RUBRIC = json.load(_f)
+except Exception:
+    GE_RUBRIC = {}  # GE falls back to writing nothing computable if rubric missing
+
+def _norm_ge_answer(val):
+    """Lowercase + trim + collapse whitespace, replicating Excel's `=` compare."""
+    if pd.isna(val): return ""
+    return re.sub(r'\s+', ' ', str(val).strip().lower())
+
+def read_ge(raw_path, sheet_name):
+    """Return (df, qcols): Score + NAMA LENGKAP + KELAS + the numbered GE answer
+    columns (dropped by read_raw_minimal), so the score can be recomputed."""
+    df = pd.read_excel(raw_path, sheet_name=sheet_name)
+    qcols = [c for c in df.columns if re.match(r'^\d+\.', str(c).strip())]
+    keep = [c for c in ['Score', 'NAMA LENGKAP', 'KELAS'] + qcols if c in df.columns]
+    return df[keep].copy(), qcols
+
+def score_ge(row_series, qcols):
+    """Sum GE rubric weights across the answer columns; first exact keyword match
+    per question wins, unmatched = 0. Returns int 0–32."""
+    total = 0
+    for col in qcols:
+        m = re.match(r'^(\d+)\.', str(col).strip())
+        if not m: continue
+        rubric = GE_RUBRIC.get(m.group(1))
+        if not rubric: continue
+        ans = _norm_ge_answer(row_series.get(col))
+        if not ans: continue
+        for entry in rubric:  # ordered → first match wins
+            if ans == entry['kw']:
+                total += entry['w']; break
+    return total
+
+def value_for(subtes, row_series, ge_qcols):
+    """Value to write for a matched RAW row: computed sum for GE, copied Score
+    otherwise. Keeps the existing value-copy behavior for every other subtest."""
+    if str(subtes).strip().upper() == 'GE':
+        return score_ge(row_series, ge_qcols)
+    return row_series.get('Score')
+
 
 # ── Background Job ──
 
@@ -366,8 +455,10 @@ def _evict_old_jobs():
         if j:
             _remove_file(os.path.join(UPLOAD_FOLDER, j['download_filename']) if j.get('download_filename') else None)
 
-def queue_or_write(ws, row_idx, col_idx, sv, best_s, gnum, subtes, gn_display, matched_name, source, log, pending):
-    """Write score directly if high-confidence match; otherwise queue it for manual review.
+def queue_or_write(ws, row_idx, col_idx, sv, best_s, gnum, subtes, gn_display, matched_name, source, log, pending, flag=None):
+    """Write score directly if high-confidence and clean; otherwise queue it for
+    manual review. `flag` is an optional (reason, severity, detail) anomaly (e.g.
+    GE zero-signal) that forces review even on a confident name match.
     Returns True if the row is considered handled (found), either way."""
     if pd.isna(sv): return False
     # Scores come from Google Forms responses — a stray non-numeric cell must
@@ -376,15 +467,18 @@ def queue_or_write(ws, row_idx, col_idx, sv, best_s, gnum, subtes, gn_display, m
         score_val = int(float(sv))
     except (ValueError, TypeError):
         return False
-    if best_s >= AUTO_CONFIDENCE:
+    if flag is None and best_s >= AUTO_CONFIDENCE:
         ws.cell(row=row_idx, column=col_idx, value=score_val)
         log['total_scores'] += 1
         if source != 'own': log['cross_kelas'] += 1
     else:
+        reason, severity, detail = flag if flag else (
+            'N1_borderline', 'block', f'skor kecocokan nama {round(best_s, 3)}')
         pending.append({
             'id': len(pending), 'gugus': gnum, 'subtes': subtes,
             'nama_rekap': gn_display, 'nama_raw': str(matched_name),
-            'score': round(best_s, 3), 'source': source,
+            'score': round(best_s, 3), 'source': source, 'kind': 'value',
+            'reason': reason, 'severity': severity, 'detail': detail,
             '_row_idx': row_idx, '_col_idx': col_idx, '_value': score_val,
         })
     return True
@@ -399,10 +493,15 @@ def process_job(job_id, raw_path, rekap_path, overrides, threshold, tgl_pemeriks
             job['status'] = 'error'; job['error'] = 'Tidak ada sheet subtes di RAW'; return
 
         job['progress'] = 8
-        all_raw = {}; all_proktor = {}; kelas_fmt = None
+        all_raw = {}; all_proktor = {}; kelas_fmt = None; ge_qcols = []
+        raw_roster = {}  # _norm -> {'nama','kelas','sheets'}: every real RAW student
+                         # (+ which sheets they appear in), for the leftover check
         for i, sn in enumerate(subtes_sheets):
             job['status'] = f'Membaca {sn}...'
-            raw = read_raw_minimal(raw_path, sn)
+            if sn.strip().upper() == 'GE':
+                raw, ge_qcols = read_ge(raw_path, sn)  # keep answer cols to recompute
+            else:
+                raw = read_raw_minimal(raw_path, sn)
             raw['_norm'] = raw['NAMA LENGKAP'].apply(normalize_name)
             # Split: normal kelas vs Proktor entries
             is_proktor = raw['KELAS'].astype(str).str.contains('Proktor', na=False)
@@ -410,6 +509,9 @@ def process_job(job_id, raw_path, rekap_path, overrides, threshold, tgl_pemeriks
             normal_df = raw[~is_proktor].drop_duplicates(subset=['_norm','KELAS'], keep='first')
             all_raw[sn] = normal_df
             all_proktor[sn] = proktor_df
+            for k, nm, kl in zip(normal_df['_norm'], normal_df['NAMA LENGKAP'], normal_df['KELAS']):
+                if not k: continue
+                raw_roster.setdefault(k, {'nama': nm, 'kelas': kl, 'sheets': set()})['sheets'].add(sn)
             if kelas_fmt is None:
                 kv = [v for v in normal_df['KELAS'].dropna().unique()]
                 kelas_fmt = detect_kelas_fmt(kv)
@@ -464,9 +566,10 @@ def process_job(job_id, raw_path, rekap_path, overrides, threshold, tgl_pemeriks
                         if mt and calc_match(mt, r['_norm'])>0.9: s=0.95
                         if s>best_s: best_s,best_i=s,ri
                     if best_s>=threshold and best_i is not None:
-                        sv = raw.loc[best_i,'Score']
-                        nm = raw.loc[best_i,'NAMA LENGKAP']
-                        found = queue_or_write(ws, row_idx, col_idx, sv, best_s, gnum, subtes, gn, nm, 'own', log, pending)
+                        mrow = raw.loc[best_i]
+                        sv = value_for(subtes, mrow, ge_qcols)
+                        flag = assess_ge(sv, mrow, ge_qcols) if str(subtes).strip().upper()=='GE' else None
+                        found = queue_or_write(ws, row_idx, col_idx, sv, best_s, gnum, subtes, gn, mrow['NAMA LENGKAP'], 'own', log, pending, flag)
                     # Step 2: cross-kelas
                     if not found:
                         raw_other = raw[raw['KELAS']!=kstr]; best_s,best_i=0,None
@@ -478,8 +581,9 @@ def process_job(job_id, raw_path, rekap_path, overrides, threshold, tgl_pemeriks
                             rr = raw.loc[best_i]; rg = extract_kelas_num(rr['KELAS'], kelas_fmt)
                             claimed = rg in gugus_all_names and any(calc_match(og, rr['_norm'])>=threshold for og in gugus_all_names[rg])
                             if not claimed:
-                                sv = rr['Score']
-                                found = queue_or_write(ws, row_idx, col_idx, sv, best_s, gnum, subtes, gn, rr['NAMA LENGKAP'], 'cross', log, pending)
+                                sv = value_for(subtes, rr, ge_qcols)
+                                flag = assess_ge(sv, rr, ge_qcols) if str(subtes).strip().upper()=='GE' else None
+                                found = queue_or_write(ws, row_idx, col_idx, sv, best_s, gnum, subtes, gn, rr['NAMA LENGKAP'], 'cross', log, pending, flag)
                     # Step 3: search Proktor entries (students who picked wrong kelas option)
                     if not found and len(proktor) > 0:
                         best_s, best_i = 0, None
@@ -488,9 +592,10 @@ def process_job(job_id, raw_path, rekap_path, overrides, threshold, tgl_pemeriks
                             if mt and calc_match(mt, r['_norm'])>0.9: s=0.95
                             if s>best_s: best_s,best_i=s,ri
                         if best_s>=threshold and best_i is not None:
-                            sv = proktor.loc[best_i,'Score']
-                            nm = proktor.loc[best_i,'NAMA LENGKAP']
-                            found = queue_or_write(ws, row_idx, col_idx, sv, best_s, gnum, subtes, gn, nm, 'proktor', log, pending)
+                            mrow = proktor.loc[best_i]
+                            sv = value_for(subtes, mrow, ge_qcols)
+                            flag = assess_ge(sv, mrow, ge_qcols) if str(subtes).strip().upper()=='GE' else None
+                            found = queue_or_write(ws, row_idx, col_idx, sv, best_s, gnum, subtes, gn, mrow['NAMA LENGKAP'], 'proktor', log, pending, flag)
                 step += 1
                 job['progress'] = min(38 + int(40*step/max(total_steps,1)), 78)
             job['status'] = f'Mencocokkan {subtes}...'
@@ -506,6 +611,9 @@ def process_job(job_id, raw_path, rekap_path, overrides, threshold, tgl_pemeriks
                 is_prok = adf['KELAS'].astype(str).str.contains('Proktor', na=False)
                 aprok = adf[is_prok].drop_duplicates(subset=['_norm'], keep='first')
                 anorm = adf[~is_prok].drop_duplicates(subset=['_norm','KELAS'], keep='first')
+                for k, nm, kl in zip(anorm['_norm'], anorm['NAMA LENGKAP'], anorm['KELAS']):
+                    if not k: continue
+                    raw_roster.setdefault(k, {'nama': nm, 'kelas': kl, 'sheets': set()})['sheets'].add(sn)
                 qmap = answer_sections[section]
                 n_write = min(len(qcols), len(qmap))
                 for gnum in gugus_nums:
@@ -533,18 +641,50 @@ def process_job(job_id, raw_path, rekap_path, overrides, threshold, tgl_pemeriks
                         row = pool.loc[best_i]
                         answers = [extract_choice(row[qcols[i]]) for i in range(n_write)]
                         targets = [qmap.get(i+1) for i in range(n_write)]
-                        if best_s >= AUTO_CONFIDENCE:
+                        # Quality gate: even a confident name match must be
+                        # confirmed if the content looks ngawur.
+                        flag = assess_answer_quality(answers)
+                        if flag is None and best_s >= AUTO_CONFIDENCE:
                             for col, val in zip(targets, answers):
                                 if col and val is not None: ws.cell(row=row_idx, column=col, value=val)
                             log['total_scores'] += 1
                             if src != 'own': log['cross_kelas'] += 1
                         else:
+                            reason, severity, detail = flag if flag else (
+                                'N1_borderline', 'block', f'skor kecocokan nama {round(best_s,3)}')
                             pending.append({
                                 'id': len(pending), 'gugus': gnum, 'subtes': section,
                                 'nama_rekap': gn, 'nama_raw': str(row['NAMA LENGKAP']),
                                 'score': round(best_s,3), 'source': src, 'kind': 'answer_choice',
+                                'reason': reason, 'severity': severity, 'detail': detail,
                                 '_row_idx': row_idx, '_answers': answers, '_targets': targets,
                             })
+
+        # ── Leftover check (N7): RAW student missing from the REKAP roster ──
+        # A RAW student counts as "missing" only if their class maps to a gugus
+        # that exists in this REKAP yet no roster name matches them — otherwise
+        # they belong to a class this REKAP simply doesn't cover (not an anomaly).
+        gugus_set = set(gugus_nums)
+        roster_all = [rn for names in gugus_all_names.values() for rn in names]
+        leftover = []
+        for k, info in raw_roster.items():
+            display, kelas, sheets = info['nama'], info['kelas'], info['sheets']
+            gnum = extract_kelas_num(kelas, kelas_fmt)
+            if gnum not in gugus_set: continue  # class not in this REKAP -> out of scope
+            best = max((calc_match(k, rn) for rn in roster_all), default=0)
+            if best >= threshold: continue      # student is represented somewhere
+            sheet_list = ', '.join(sorted(sheets))
+            leftover.append((gnum, display, kelas, round(best, 3), sheet_list))
+            pending.append({
+                'id': len(pending), 'gugus': gnum, 'subtes': sheet_list or '-', 'kind': 'leftover',
+                'nama_rekap': '(tidak ada di rekap)', 'nama_raw': str(display),
+                'score': round(best, 3), 'source': 'raw',
+                'reason': 'N7_leftover', 'severity': 'warn',
+                'detail': (f'Ada di RAW (kelas {kelas}) tapi tidak ada di roster Gugus {gnum} '
+                          f'— muncul di sheet: {sheet_list}'),
+            })
+        log['leftover_raw'] = [{'gugus': g, 'nama': d, 'kelas': str(kl), 'best': b, 'subtes': sl}
+                               for g, d, kl, b, sl in leftover]
 
         ctx = {'wb':wb,'headers':headers,'name_col':name_col,'gugus_rows':gugus_rows,
                'gugus_nums':gugus_nums,'rekap_subtes':rekap_subtes,'raw_path':raw_path,
@@ -573,6 +713,7 @@ def finalize_job(job_id):
     kelas_fmt = ctx['kelas_fmt']; tgl_pemeriksaan = ctx['tgl_pemeriksaan']; pendidikan = ctx['pendidikan']
     log = ctx['log']; threshold = ctx['threshold']; norm_ov = ctx['norm_ov']
     data_start = ctx.get('data_start', 2)
+    answer_sections = ctx.get('answer_sections') or {}
     try:
         # ── Identity ──
         job['status'] = 'Mengisi identitas...'; job['progress'] = 80
@@ -634,30 +775,49 @@ def finalize_job(job_id):
                 if pendidikan_col and pendidikan:
                     ws.cell(row=row, column=pendidikan_col, value=pendidikan)
 
-        # ── Yellow highlight + stats ──
+        # ── Missing-value fill + yellow highlight + stats ──
+        # A student is "matched" if any Score subtest OR any answer block is
+        # filled. Matched students get their empty Score cells written as 0
+        # (SE…WU + computed GE); answer blocks (EPPS/RIASEC/GB) keep true blanks.
+        # Yellow now means fully unmatched (nothing anywhere), not "empty score".
         job['status'] = 'Finalisasi...'; job['progress'] = 93
         subtes_cols = [headers[s] for s in rekap_subtes if s in headers]
+        answer_cols = {section: list(qmap.values())
+                       for section, qmap in answer_sections.items()}
         yf = PatternFill(start_color='FFFF00', end_color='FFFF00', fill_type='solid')
         for gnum in gugus_nums:
             ws = wb[f'Gugus {gnum}']; ts,fc,yc=0,0,0
             yellow_names = []
+            ans_cov = {section: 0 for section in answer_cols}
             for row in range(data_start, ws.max_row+1):
                 nm = ws.cell(row=row, column=name_col).value
                 if not nm: continue
                 ts += 1
+                # genuine coverage, measured before any 0-fill
                 rf = sum(1 for c in subtes_cols if ws.cell(row=row,column=c).value is not None)
+                filled_sections = [s for s, cols in answer_cols.items()
+                                   if any(ws.cell(row=row,column=c).value not in (None,'') for c in cols)]
+                for s in filled_sections: ans_cov[s] += 1
                 fc += rf
-                if rf == 0:
+                matched = rf > 0 or bool(filled_sections)
+                if not matched:
                     for col in range(1, ws.max_column+1): ws.cell(row=row, column=col).fill = yf
                     yc += 1; log['yellow_count'] += 1
                     yellow_names.append(str(nm))
-                elif rf < len(subtes_cols):
+                    continue
+                # report genuinely-missing Score subtests (before they become 0)
+                if rf < len(subtes_cols):
                     gn_name = normalize_name(nm)
                     missing = [rekap_subtes[j] for j,c in enumerate(subtes_cols) if ws.cell(row=row,column=c).value is None]
                     log['unmatched_summary'].append({'gugus':gnum,'nama':gn_name,'missing':missing,'all_missing':False})
+                # 0-fill empty Score cells (matched students only)
+                for c in subtes_cols:
+                    if ws.cell(row=row,column=c).value is None:
+                        ws.cell(row=row, column=c, value=0)
             tc = ts * len(subtes_cols)
             log['per_gugus'][f'Gugus {gnum}'] = {'siswa':ts,'filled':fc,'total':tc,
-                'pct':fc*100//tc if tc else 0,'yellow':yc}
+                'pct':fc*100//tc if tc else 0,'yellow':yc,
+                'answer_coverage':ans_cov}
             if yellow_names:
                 log['yellow_detail'].append({'gugus':gnum, 'names':yellow_names})
 
@@ -681,6 +841,20 @@ def healthz():
     """Unauthenticated on purpose — platform health checks (Render etc.) hit
     this before any token exists. Reveals nothing beyond "process is alive"."""
     return jsonify({'status': 'ok'}), 200
+
+@app.route('/console')
+def dev_console():
+    """Serve the local test console (test_console.html) same-origin so its API
+    calls avoid CORS. Off by default to preserve the "no public UI" posture —
+    opt in with ENABLE_TEST_CONSOLE=1 for local dev only. The page itself still
+    carries the bearer token on every API call; this route only serves static
+    HTML and exposes nothing."""
+    if os.environ.get('ENABLE_TEST_CONSOLE', '').lower() not in ('1', 'true', 'yes'):
+        return "Not found", 404
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'test_console.html')
+    if not os.path.exists(path):
+        return "console not found", 404
+    return send_file(path)
 
 @app.route('/process', methods=['POST'])
 @require_service_token
@@ -729,16 +903,19 @@ def submit_review(job_id):
     decisions = data.get('decisions', {})
     ctx = j['_ctx']; wb = ctx['wb']; log = ctx['log']
     for item in j.get('pending', []):
-        if decisions.get(str(item['id'])):
-            ws = wb[f"Gugus {item['gugus']}"]
-            if item.get('kind') == 'answer_choice':
-                for col, val in zip(item['_targets'], item['_answers']):
-                    if col and val is not None:
-                        ws.cell(row=item['_row_idx'], column=col, value=val)
-            else:
-                ws.cell(row=item['_row_idx'], column=item['_col_idx'], value=item['_value'])
-            log['total_scores'] += 1
-            if item['source'] != 'own': log['cross_kelas'] += 1
+        if not decisions.get(str(item['id'])): continue
+        kind = item.get('kind')
+        if kind == 'leftover':
+            continue  # informational only — no roster row exists to write to
+        ws = wb[f"Gugus {item['gugus']}"]
+        if kind == 'answer_choice':
+            for col, val in zip(item['_targets'], item['_answers']):
+                if col and val is not None:
+                    ws.cell(row=item['_row_idx'], column=col, value=val)
+        else:
+            ws.cell(row=item['_row_idx'], column=item['_col_idx'], value=item['_value'])
+        log['total_scores'] += 1
+        if item['source'] != 'own': log['cross_kelas'] += 1
     j['pending'] = []
     j['status'] = 'Melanjutkan proses...'; j['progress'] = 80
     threading.Thread(target=finalize_job, args=(job_id,), daemon=True).start()

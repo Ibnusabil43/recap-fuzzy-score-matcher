@@ -332,12 +332,12 @@ tunable constants.
 - `extract_choice`; block writer (N cells, positional map); reuse 3-tier match.
 - **Exit:** EPPS/RIASEC/GB blocks fill with parsed tokens; blanks stay blank.
 
-### Phase C — `computed_ge` kind
+### Phase C — `computed_ge` kind — ✅ DONE
 - Bundle `data/ge_rubric.json`; `score_ge`; GE reader keeps Q61–76; intercept
   GE to write computed sum instead of RAW `Score`.
 - **Exit:** GE column shows rubric sum; `score_ge` unit-tested against rubric.
 
-### Phase D — Missing-value normalization
+### Phase D — Missing-value normalization — ✅ DONE
 - Score columns (incl. GE) → `0` for matched students; answer blocks → blank.
 - Reconcile with yellow: yellow now means **unmatched or ngawur**, not "empty
   score cell". 0-fill applies to matched rows only.
@@ -347,14 +347,14 @@ tunable constants.
 - **Exit:** matched students never show empty score cells; blanks preserved in
   answer blocks; yellow only on unmatched/ngawur; log reports all kinds.
 
-### Phase E — Anomaly detection & confirmation review
+### Phase E — Anomaly detection & confirmation review — ◑ CORE DONE
 - Implement triggers 2.1.4 (start with N1–N5, C1–C3, V1–V3, S1–S3; rest as
   follow-ups). Extend `pending` schema + `/review` to handle pick-one choices.
 - `assess_quality(kind, answers)` for the ngawur/straight-line/sparse checks.
 - **Exit:** anomalous data routes to review with actionable detail; nothing
   janggal is written unconfirmed at `block` severity.
 
-### Phase F — Test console + dev ergonomics
+### Phase F — Test console + dev ergonomics — ✅ DONE
 - Ship `test_console.html` (single-file harness, see 2.1.6).
 - Optional dev-only route `GET /console` (serves the file, same-origin, no
   CORS) — gated behind an env flag; keeps the "no public UI" posture.
@@ -393,9 +393,26 @@ browser started with web-security disabled — documented in the page itself.
       section-block mapper). Verified on real template + legacy fallback.
 - [x] **Phase B** — `answer_choice` kind (EPPS/RIASEC/GB). Verified: 6 students
       × 225/108/30 cells filled with correct tokens; borderline → review block.
-- [ ] **Phase C** — `computed_ge` (rubric sum is final; `data/ge_rubric.json`
-      ready). *Next up.*
-- [ ] **Phase D** — missing-value 0-fill (matched students only) + yellow
-      reconcile + log for answer/computed kinds.
-- [ ] **Phase E** — anomaly/confirmation review (§2.1.4 defaults).
-- [ ] **Phase F** — test console route (`GET /console`) + docs.
+- [x] **Phase C** — `computed_ge`. Verified: FAIZ RAW Score 4 → computed 16
+      (exact-match rubric, blank/`indera`/`antonim` → 0); GE column shows the
+      recomputed sum, RAW Score ignored.
+- [x] **Phase D** — missing-value 0-fill (matched students only) + yellow now
+      = fully-unmatched + `answer_coverage` in log. Verified: matched rows have
+      no empty score cells; unmatched stay blank + yellow.
+- [◑] **Phase E** — CORE done. Implemented triggers, all routed to the review
+      queue with a **uniform** `reason`/`severity`/`detail`/`kind` schema across
+      both the answer path AND the score path (`queue_or_write` now emits it too):
+      - **C1** straight-line=block, **C2** sparse=warn, **C3** blank=warn
+        (`assess_answer_quality`, EPPS/RIASEC/GB).
+      - **N1** borderline name match=block (score + answer paths).
+      - **N7** leftover — RAW student whose class is in this REKAP but absent
+        from the roster → `warn`; out-of-scope classes ignored; also in
+        `log['leftover_raw']`.
+      - **V3** GE zero-signal — GE=0 despite ≥5 filled answers → block
+        (`assess_ge`), forces review even on a confident name match.
+      Verified end-to-end; clean data produces no spurious flags.
+      **Deferred triggers** (follow-up pass): N2/N3 ambiguous & collision,
+      N4 cross-kelas confirm, N5 gibberish-name, V1/V2/V4/V5 other score
+      anomalies, D1–D4 date/biodata, S1–S4 structural.
+- [x] **Phase F** — `GET /console` serves `test_console.html` same-origin,
+      gated by `ENABLE_TEST_CONSOLE` (404 by default). Verified.

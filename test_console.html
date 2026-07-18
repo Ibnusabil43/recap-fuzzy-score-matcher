@@ -264,12 +264,20 @@ function renderReview(pending) {
 function renderItem(it) {
   const el = document.createElement('div'); el.className = 'item';
   const score = (it.score != null) ? ` · <span class="muted">skor ${it.score}</span>` : '';
+  // Leftover (N7) is informational — no roster row to accept/reject into.
+  const infoOnly = it.kind === 'leftover';
   let candHtml = '';
   if (Array.isArray(it.candidates) && it.candidates.length) {
     candHtml = it.candidates.map((c, i) =>
       `<label class="choice"><input type="radio" name="cand_${it.id}" value="${i}"> ${c.nama_raw ?? c} ${c.score!=null?`(${c.score})`:''}</label>`
     ).join('');
   }
+  const decideHtml = infoOnly
+    ? `<div class="decide"><span class="muted" style="font-size:12px">tambahkan manual</span></div>`
+    : `<div class="decide">
+         <button class="toggle" data-act="accept">Terima</button>
+         <button class="toggle" data-act="reject">Tolak</button>
+       </div>`;
   el.innerHTML = `
     <div class="meta">
       <div class="names"><b>${it.nama_rekap ?? '?'}</b> ↔ ${it.nama_raw ?? '—'}
@@ -277,17 +285,16 @@ function renderItem(it) {
       <div class="detail">${it.detail ?? reasonText(it.reason)}</div>
       ${candHtml}
     </div>
-    <div class="decide">
-      <button class="toggle" data-act="accept">Terima</button>
-      <button class="toggle" data-act="reject">Tolak</button>
-    </div>`;
-  const btns = el.querySelectorAll('.toggle');
-  btns.forEach(b => b.addEventListener('click', () => {
-    const accept = b.dataset.act === 'accept';
-    state.decisions[it.id] = accept;
-    btns.forEach(x => x.className = 'toggle');
-    b.classList.add(accept ? 'on-accept' : 'on-reject');
-  }));
+    ${decideHtml}`;
+  if (!infoOnly) {
+    const btns = el.querySelectorAll('.toggle');
+    btns.forEach(b => b.addEventListener('click', () => {
+      const accept = b.dataset.act === 'accept';
+      state.decisions[it.id] = accept;
+      btns.forEach(x => x.className = 'toggle');
+      b.classList.add(accept ? 'on-accept' : 'on-reject');
+    }));
+  }
   if (candHtml) el.querySelectorAll(`input[name=cand_${it.id}]`).forEach(r =>
     r.addEventListener('change', e => { state.choices[it.id] = Number(e.target.value); }));
   return el;
@@ -296,13 +303,15 @@ function renderItem(it) {
 $('acceptAllBtn').addEventListener('click', () => bulk(true));
 $('rejectAllBtn').addEventListener('click', () => bulk(false));
 function bulk(v) {
+  // Only decide items that actually have a decision (skip info-only leftovers).
   for (const p of state.pending) {
+    if (p.kind === 'leftover') continue;
     state.decisions[p.id] = v;
-    document.querySelectorAll(`.item`).forEach(()=>{});
   }
-  // reflect visually
-  document.querySelectorAll('.review-group .item').forEach((row, i) => {
+  // reflect visually — leftover rows have no toggles, so guard.
+  document.querySelectorAll('.review-group .item').forEach(row => {
     const btns = row.querySelectorAll('.toggle');
+    if (!btns.length) return;
     btns.forEach(x => x.className = 'toggle');
     btns[v ? 0 : 1].classList.add(v ? 'on-accept' : 'on-reject');
   });
