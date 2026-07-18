@@ -49,6 +49,13 @@ def require_service_token(fn):
 # Skor kecocokan nama di bawah ini butuh konfirmasi manual sebelum ditulis ke Rekap.
 AUTO_CONFIDENCE = 0.90
 
+# Floor below which a leftover student's "closest roster name" is just noise
+# (coincidental partial overlap, not a plausible same-person typo) — e.g. a
+# junk RAW row scoring 15-50% against an unrelated name. Below this, the
+# closest_candidate is still shown for transparency but not offered as a
+# one-click-confirmable match in the review UI.
+LEFTOVER_CANDIDATE_MIN = 0.55
+
 
 # ── Name Matching ──
 
@@ -488,6 +495,63 @@ def queue_or_write(ws, row_idx, col_idx, sv, best_s, gnum, subtes, gn_display, m
         })
     return True
 
+def _apply_leftover_confirm(wb, raw_path, item, subtes_list, headers, answer_sections, ge_qcols):
+    """Write a confirmed subset of a leftover student's subtests into their
+    matched candidate's roster row (item['_candidate_gugus']/['_candidate_row'],
+    set only when 'confirmable' — see the leftover-check pass in process_job).
+
+    Re-reads raw_path directly for just the requested sheets rather than
+    caching every RAW row up front — leftover confirmation is the rare,
+    manually-triggered path, not the per-cell hot loop the rest of this file
+    optimizes for. raw_path is still on disk at this point: it's only removed
+    by _free_job_memory, which runs after finalize_job, which this function's
+    caller (submit_review) always runs strictly before.
+
+    Returns True if at least one subtest was actually written."""
+    gnum, row_idx, k = item.get('_candidate_gugus'), item.get('_candidate_row'), item.get('_norm_key')
+    if gnum is None or row_idx is None or not k: return False
+    ws = wb[f'Gugus {gnum}']
+    wrote = False
+    for sn in subtes_list:
+        sn = str(sn).strip().upper()
+        if sn in headers:
+            # Score-type subtest (SE/WA/AN/GE/RA/ZR/FA/WU/ME/...): one cell.
+            if sn == 'GE':
+                df, gqc = read_ge(raw_path, sn)
+            else:
+                df, gqc = read_raw_minimal(raw_path, sn), []
+            df = df.copy()
+            df['_norm'] = df['NAMA LENGKAP'].apply(normalize_name)
+            match = df[df['_norm'] == k]
+            if match.empty: continue
+            row = match.iloc[0]
+            sv = value_for(sn, row, gqc)
+            if pd.isna(sv): continue
+            try: score_val = int(float(sv))
+            except (ValueError, TypeError): continue
+            ws.cell(row=row_idx, column=headers[sn], value=score_val)
+            wrote = True
+        else:
+            # Answer-choice subtest (EPPS/RIASEC/GB): a whole question block.
+            section = RAW_TO_SECTION.get(sn, sn)
+            qmap = answer_sections.get(section)
+            if not qmap: continue
+            found_sheet = next((asn for asn, _ in detect_answer_sheets(raw_path)
+                                 if asn.strip().upper() == sn), None)
+            if not found_sheet: continue
+            adf, qcols = read_raw_answers(raw_path, found_sheet)
+            match = adf[adf['_norm'] == k]
+            if match.empty: continue
+            row = match.iloc[0]
+            n_write = min(len(qcols), len(qmap))
+            answers = [extract_choice(row[qcols[i]]) for i in range(n_write)]
+            targets = [qmap.get(i+1) for i in range(n_write)]
+            for col, val in zip(targets, answers):
+                if col and val is not None:
+                    ws.cell(row=row_idx, column=col, value=val)
+                    wrote = True
+    return wrote
+
 def process_job(job_id, raw_path, rekap_path, overrides, threshold, tgl_pemeriksaan, pendidikan):
     job = jobs[job_id]
     try:
@@ -670,7 +734,6 @@ def process_job(job_id, raw_path, rekap_path, overrides, threshold, tgl_pemeriks
         # that exists in this REKAP yet no roster name matches them — otherwise
         # they belong to a class this REKAP simply doesn't cover (not an anomaly).
         gugus_set = set(gugus_nums)
-        roster_all = [rn for names in gugus_all_names.values() for rn in names]
         leftover = []
         for k, info in raw_roster.items():
             display, kelas, sheets = info['nama'], info['kelas'], info['sheets']
@@ -678,14 +741,18 @@ def process_job(job_id, raw_path, rekap_path, overrides, threshold, tgl_pemeriks
             if gnum not in gugus_set: continue  # class not in this REKAP -> out of scope
             # Track which roster name produced the best score too, not just the
             # score itself — a low score alone is a dead end; the closest
-            # candidate name lets an admin manually confirm a match calc_match
-            # couldn't clear on its own (e.g. a vowel-dropped abbreviation).
-            best, best_candidate = 0, None
-            for rn in roster_all:
-                sc = calc_match(k, rn)
-                if sc > best: best, best_candidate = sc, rn
+            # candidate's exact (gugus, row) lets an admin confirm specific
+            # subtests for this match straight from the review UI (a match
+            # calc_match couldn't clear on its own, e.g. a vowel-dropped
+            # abbreviation), instead of only offering a hint with no action.
+            best, best_candidate, cand_gugus, cand_row = 0, None, None, None
+            for gn2, rows in gugus_rows.items():
+                for ri, rn in rows.items():
+                    sc = calc_match(k, rn)
+                    if sc > best: best, best_candidate, cand_gugus, cand_row = sc, rn, gn2, ri
             if best >= threshold: continue      # student is represented somewhere
             sheet_list = ', '.join(sorted(sheets))
+            confirmable = best >= LEFTOVER_CANDIDATE_MIN and best_candidate is not None
             leftover.append((gnum, display, kelas, round(best, 3), sheet_list, best_candidate))
             # closest_candidate is a separate structured field (not folded into
             # `detail`) so the dashboard can render it on its own, in English,
@@ -697,6 +764,13 @@ def process_job(job_id, raw_path, rekap_path, overrides, threshold, tgl_pemeriks
                 'nama_rekap': '(tidak ada di rekap)', 'nama_raw': str(display),
                 'score': round(best, 3), 'source': 'raw', 'closest_candidate': best_candidate,
                 'reason': 'N7_leftover', 'severity': 'warn', 'detail': detail,
+                'confirmable': confirmable,
+                # Internal-only (stripped from /status by the leading underscore
+                # convention) — needed by submit_review to write a per-subtest
+                # confirmation into the candidate's own roster row.
+                '_norm_key': k, '_sheets': sorted(sheets),
+                '_candidate_gugus': cand_gugus if confirmable else None,
+                '_candidate_row': cand_row if confirmable else None,
             })
         log['leftover_raw'] = [{'gugus': g, 'nama': d, 'kelas': str(kl), 'best': b, 'subtes': sl,
                                  'closest_candidate': cn}
@@ -706,7 +780,7 @@ def process_job(job_id, raw_path, rekap_path, overrides, threshold, tgl_pemeriks
                'gugus_nums':gugus_nums,'rekap_subtes':rekap_subtes,'raw_path':raw_path,
                'subtes_sheets':subtes_sheets,'all_raw':all_raw,'all_proktor':all_proktor,
                'kelas_fmt':kelas_fmt,'tgl_pemeriksaan':tgl_pemeriksaan,'pendidikan':pendidikan,
-               'log':log,'threshold':threshold,'norm_ov':norm_ov,
+               'log':log,'threshold':threshold,'norm_ov':norm_ov,'ge_qcols':ge_qcols,
                'header_row':header_row,'data_start':data_start,'answer_sections':answer_sections}
         if pending:
             job['_ctx'] = ctx; job['pending'] = pending
@@ -918,11 +992,26 @@ def submit_review(job_id):
     data = request.get_json(silent=True) or {}
     decisions = data.get('decisions', {})
     ctx = j['_ctx']; wb = ctx['wb']; log = ctx['log']
+    headers = ctx.get('headers', {}); answer_sections = ctx.get('answer_sections') or {}
+    ge_qcols = ctx.get('ge_qcols', []); raw_path = ctx.get('raw_path')
     for item in j.get('pending', []):
-        if not decisions.get(str(item['id'])): continue
+        dec = decisions.get(str(item['id']))
+        if not dec: continue
         kind = item.get('kind')
         if kind == 'leftover':
-            continue  # informational only — no roster row exists to write to
+            # Unlike value/answer_choice (boolean per item), a leftover item's
+            # decision is the LIST of subtest codes the admin checked in the
+            # review UI's per-subtest dropdown — not confirmed wholesale, since
+            # a candidate name plausible enough to suggest isn't automatically
+            # plausible enough to blindly apply to every one of a student's
+            # subtests. Only 'confirmable' items (see process_job) have a
+            # resolved candidate row to write into at all.
+            if not item.get('confirmable') or not isinstance(dec, list) or not dec:
+                continue
+            if _apply_leftover_confirm(wb, raw_path, item, dec, headers, answer_sections, ge_qcols):
+                log['total_scores'] += 1
+                log['cross_kelas'] += 1  # always lands on a different roster row than the one RAW claimed
+            continue
         ws = wb[f"Gugus {item['gugus']}"]
         if kind == 'answer_choice':
             for col, val in zip(item['_targets'], item['_answers']):
