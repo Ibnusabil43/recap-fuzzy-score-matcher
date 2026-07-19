@@ -1,0 +1,19 @@
+name: Deploy to Fly.io
+
+# Auto-deploys on every push to main — the same trigger Render used. Push to
+# staging still runs CI-less; promote staging -> main (merge/PR) to ship.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}   # lets you trigger a redeploy manually from the Actions tab
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    concurrency: deploy-group   # never run two deploys at once
+    steps:
+      - uses: actions/checkout@v4
+      - uses: superfly/flyctl-actions/setup-flyctl@master
+      - run: flyctl deploy --remote-only
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}

@@ -1,0 +1,36 @@
+# fly.toml — recap-fuzzy-score-matcher
+# Generated for manual review before first deploy. Run `fly launch --no-deploy`
+# once to create the actual Fly app first if you haven't yet (see README/chat
+# for the one-time bootstrap steps) — this file assumes the app already exists.
+
+app = "recap-fuzzy-score-matcher"   # rename if `fly launch` picked a different name
+primary_region = "sin"              # Singapore — same region as the old Render service
+
+[build]
+
+[env]
+  PORT = "5000"
+
+[http_service]
+  internal_port = 5000
+  force_https = true
+  # Both of these MUST stay as set below: the app keeps job state (`jobs = {}`)
+  # in a single process's memory and runs recap processing in a background
+  # thread, not inside the HTTP request. Fly's default auto-stop only looks at
+  # open connections, so an idle-looking machine could be stopped mid-job; and
+  # more than one machine would split /status polls across job stores that
+  # don't share state, since jobs are never persisted anywhere else.
+  auto_stop_machines = false
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [[http_service.checks]]
+    path = "/healthz"
+    interval = "30s"
+    timeout = "5s"
+    grace_period = "10s"
+    method = "GET"
+
+[[vm]]
+  size = "shared-cpu-2x"
+  memory = "1024mb"
