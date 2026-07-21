@@ -35,13 +35,18 @@ GE_RUBRIC: dict[str, list[dict[str, object]]] = _load_rubric()
 def extract_choice(val: object) -> str | None:
     """Take the leading choice token from an answer, dot included, case
     preserved: "A. Saya suka..." -> "A.", "b. Mendengarkan..." -> "b.".
-    Values without a letter+dot prefix (RIASEC's "Ya"/"Tidak") pass through
-    trimmed. Blank/NaN -> None (write nothing / empty cell)."""
+    PAPI answers lead with a numbered choice instead: "1). Saya seorang
+    pekerja..." -> "1)." (paren + dot kept). Values without either prefix
+    (RIASEC's "Ya"/"Tidak") pass through trimmed. Blank/NaN -> None (write
+    nothing / empty cell)."""
     if pd.isna(val): return None
     s = str(val).strip()
     if not s: return None
     m = re.match(r'^([A-Za-z]+)\.', s)
-    return m.group(0) if m else s
+    if m: return m.group(0)
+    m = re.match(r'^(\d+\)\.?)', s)
+    if m: return m.group(1)
+    return s
 
 
 def _norm_ge_answer(val: object) -> str:

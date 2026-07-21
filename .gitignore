@@ -5,3 +5,4 @@ venv/
 .venv/
 .claude/
 .DS_Store
+/graphify-out

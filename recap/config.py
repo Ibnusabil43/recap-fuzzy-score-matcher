@@ -40,7 +40,7 @@ MATCH_CACHE_SIZE: int = 1_048_576
 
 # Answer-type REKAP sections: a numbered question block, not a single score cell.
 # Keys are the row-1 section labels as they appear in the template.
-ANSWER_SECTION_LABELS: frozenset[str] = frozenset({"EPPS", "RIASEC", "GAYA BELAJAR"})
+ANSWER_SECTION_LABELS: frozenset[str] = frozenset({"EPPS", "RIASEC", "GAYA BELAJAR", "PAPI"})
 
 # RAW sheet name -> REKAP section label (row-1 merged label).
-RAW_TO_SECTION: dict[str, str] = {"EPPS": "EPPS", "RIASEC": "RIASEC", "GB": "GAYA BELAJAR"}
+RAW_TO_SECTION: dict[str, str] = {"EPPS": "EPPS", "RIASEC": "RIASEC", "GB": "GAYA BELAJAR", "PAPI": "PAPI"}
